@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sketchpad – Draw & Save as PDF</title>
+<style>
+:root{--bg:#f4f4f1;--panel:#fff;--text:#1c1c1c;--muted:#6b6b66;--line:#dcdcd6;--accent:#4f46e5;--accent-text:#fff;--hover:#ececf8;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#17171a;--panel:#232327;--text:#f0f0ee;--muted:#9a9a95;--line:#38383d;--accent:#818cf8;--accent-text:#111;--hover:#2f2f3a;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#17171a;--panel:#232327;--text:#f0f0ee;--muted:#9a9a95;--line:#38383d;--accent:#818cf8;--accent-text:#111;--hover:#2f2f3a;color-scheme:dark}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-text-size-adjust:100%}
+.app{max-width:1100px;margin:0 auto;padding:10px}
+h1{font-size:18px;margin:2px 0 8px;font-weight:650}
+.bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:8px;margin-bottom:8px}
+.sep{width:1px;align-self:stretch;background:var(--line);margin:0 2px}
+button,.btn{font:inherit;font-size:13px;color:var(--text);background:transparent;border:1px solid var(--line);border-radius:8px;padding:7px 10px;cursor:pointer;display:inline-flex;gap:5px;align-items:center;white-space:nowrap;flex-shrink:0;min-height:36px}
+button:hover,.btn:hover{background:var(--hover)}
+button.on{background:var(--accent);color:var(--accent-text);border-color:var(--accent)}
+button:disabled{opacity:.4;cursor:default}
+button.primary{background:var(--accent);color:var(--accent-text);border-color:var(--accent);font-weight:600}
+button.danger{color:#d93a3a}
+label{font-size:12px;color:var(--muted);display:inline-flex;gap:6px;align-items:center;flex-shrink:0}
+input[type=color]{width:36px;height:34px;padding:0;border:1px solid var(--line);border-radius:8px;background:none;flex-shrink:0}
+input[type=range]{width:90px}
+.sw{width:26px;height:26px;min-height:0;padding:0;border-radius:50%;border:2px solid var(--line)}
+.emojis{display:flex;flex-wrap:wrap;gap:2px}
+.emojis button{font-size:22px;padding:3px 6px;border-radius:8px;min-height:40px}
+.stage{overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:8px;text-align:center}
+.paper{position:relative;display:inline-block;max-width:100%;line-height:0;box-shadow:0 1px 6px rgba(0,0,0,.18);border-radius:4px;overflow:hidden;vertical-align:top}
+.paper canvas{display:block;max-width:100%;height:auto}
+.paper canvas.top{position:absolute;left:0;top:0;width:100%;height:100%;touch-action:none}
+.msg{font-size:12px;color:var(--muted);margin:8px 2px;min-height:16px}
+.actions{position:sticky;bottom:0;z-index:5;margin-bottom:0}
+@media (max-width:640px){
+ .app{padding:6px}
+ .bar{padding:6px;gap:5px}
+ .scroll{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch}
+ .lbl{display:none}
+ .tool{font-size:18px;padding:6px 11px;min-height:42px}
+ .actions button{flex:1;justify-content:center}
+ .actions .sep{display:none}
+ .actions{flex-wrap:wrap}
+ .actions .primary{flex-basis:100%}
+ input[type=range]{width:80px}
+ .stage{padding:4px}
+}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script>
+const {useState,useRef,useEffect}=React, h=React.createElement;
+const EMOJIS=["😀","😍","😂","😎","🤔","😭","👍","👎","👏","🙏","❤️","🔥","⭐","✅","❌","⚠️","💡","🎉","🌈","☀️","🌙","🌸","🌳","🐶","🐱","🍕","🚀","🏠","📌","💬"];
+const TOOLS=[["pen","✏️","Pen"],["eraser","🧽","Eraser"],["line","╱","Line"],["arrow","➜","Arrow"],["rect","▭","Rectangle"],["circle","◯","Circle"],["emoji","😊","Emoji"],["crop","✂️","Crop"]];
+const SWATCHES=["#ffffff","#fff8e1","#e3f2fd","#e8f5e9","#fce4ec","#ede7f6","#212121"];
+
+function App(){
+  const cv=useRef(null), bgc=useRef(null), undo=useRef([]), redo=useRef([]), st=useRef({}), dl=useRef(null), bgs=useRef({color:"#ffffff",img:null});
+  const [tool,setTool]=useState("pen"),[color,setColor]=useState("#1c1c1c"),[size,setSize]=useState(4),[bgColor,setBgColor]=useState("#ffffff");
+  const [emoji,setEmoji]=useState("⭐"),[fill,setFill]=useState(false),[msg,setMsg]=useState("Pick a tool and start drawing."),[,tick]=useState(0);
+  const dctx=()=>cv.current.getContext("2d",{willReadFrequently:true});
+  const bctx=()=>bgc.current.getContext("2d",{willReadFrequently:true});
+  const dims=(w,hh)=>{cv.current.width=w;cv.current.height=hh;bgc.current.width=w;bgc.current.height=hh};
+  const snap=withBg=>({d:dctx().getImageData(0,0,cv.current.width,cv.current.height),bg:withBg?bctx().getImageData(0,0,bgc.current.width,bgc.current.height):null});
+  const restore=s=>{
+    cv.current.width=s.d.width;cv.current.height=s.d.height;
+    if(s.bg){bgc.current.width=s.bg.width;bgc.current.height=s.bg.height;bctx().putImageData(s.bg,0,0)}
+    dctx().putImageData(s.d,0,0);
+  };
+  const paintBg=()=>{const c=bctx(),b=bgs.current;c.fillStyle=b.color;c.fillRect(0,0,bgc.current.width,bgc.current.height);if(b.img)c.drawImage(b.img,0,0,bgc.current.width,bgc.current.height)};
+  const push=e=>{undo.current.push(e);if(undo.current.length>25)undo.current.shift();redo.current=[];tick(n=>n+1)};
+
+  useEffect(()=>{
+    dims(1000,700);paintBg();
+    try{window.claude&&claude.use("downloads").then(d=>{dl.current=d}).catch(()=>{})}catch(e){}
+  },[]);
+
+  const pos=e=>{const r=cv.current.getBoundingClientRect();return{x:(e.clientX-r.left)*cv.current.width/r.width,y:(e.clientY-r.top)*cv.current.height/r.height}};
+
+  const drawShape=(c,a,b)=>{
+    c.strokeStyle=color;c.fillStyle=color;c.lineWidth=size;c.lineCap="round";c.lineJoin="round";
+    if(tool==="line"||tool==="arrow"){
+      c.beginPath();c.moveTo(a.x,a.y);c.lineTo(b.x,b.y);c.stroke();
+      if(tool==="arrow"){
+        const ang=Math.atan2(b.y-a.y,b.x-a.x),L=12+size*3;
+        c.beginPath();c.moveTo(b.x,b.y);
+        c.lineTo(b.x-L*Math.cos(ang-Math.PI/7),b.y-L*Math.sin(ang-Math.PI/7));
+        c.lineTo(b.x-L*Math.cos(ang+Math.PI/7),b.y-L*Math.sin(ang+Math.PI/7));
+        c.closePath();c.fill();
+      }
+    }else if(tool==="rect"){
+      c.beginPath();c.rect(a.x,a.y,b.x-a.x,b.y-a.y);fill?c.fill():c.stroke();
+    }else if(tool==="circle"){
+      c.beginPath();c.ellipse((a.x+b.x)/2,(a.y+b.y)/2,Math.abs(b.x-a.x)/2,Math.abs(b.y-a.y)/2,0,0,Math.PI*2);fill?c.fill():c.stroke();
+    }else if(tool==="crop"){
+      c.save();c.setLineDash([8,6]);c.strokeStyle="#4f46e5";c.lineWidth=3;c.strokeRect(a.x,a.y,b.x-a.x,b.y-a.y);c.restore();
+    }
+  };
+
+  const down=e=>{
+    e.preventDefault();cv.current.setPointerCapture(e.pointerId);
+    const p=pos(e),c=dctx(),base=c.getImageData(0,0,cv.current.width,cv.current.height);
+    st.current={on:true,start:p,last:p,base};
+    push({d:base,bg:tool==="crop"?bctx().getImageData(0,0,bgc.current.width,bgc.current.height):null});
+    if(tool==="emoji"){
+      c.font=(28+size*6)+"px 'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',sans-serif";
+      c.textAlign="center";c.textBaseline="middle";c.fillText(emoji,p.x,p.y);st.current.on=false;
+    }else if(tool==="pen"||tool==="eraser"){
+      const er=tool==="eraser";
+      c.globalCompositeOperation=er?"destination-out":"source-over";
+      c.fillStyle=color;c.beginPath();c.arc(p.x,p.y,(er?size*2.5:size)/2,0,Math.PI*2);c.fill();
+      c.globalCompositeOperation="source-over";
+    }
+  };
+  const move=e=>{
+    const s=st.current;if(!s.on)return;
+    const p=pos(e),c=dctx();
+    if(tool==="pen"||tool==="eraser"){
+      const er=tool==="eraser";
+      c.globalCompositeOperation=er?"destination-out":"source-over";
+      c.strokeStyle=color;c.lineWidth=er?size*2.5:size;c.lineCap="round";c.lineJoin="round";
+      c.beginPath();c.moveTo(s.last.x,s.last.y);c.lineTo(p.x,p.y);c.stroke();s.last=p;
+      c.globalCompositeOperation="source-over";
+    }else{c.putImageData(s.base,0,0);drawShape(c,s.start,p)}
+  };
+  const up=e=>{
+    const s=st.current;if(!s.on)return;s.on=false;
+    if(tool==="crop"){
+      const p=pos(e),x=Math.max(0,Math.round(Math.min(s.start.x,p.x))),y=Math.max(0,Math.round(Math.min(s.start.y,p.y)));
+      const w=Math.min(cv.current.width-x,Math.round(Math.abs(p.x-s.start.x))),hh=Math.min(cv.current.height-y,Math.round(Math.abs(p.y-s.start.y)));
+      dctx().putImageData(s.base,0,0);
+      if(w>10&&hh>10){
+        const d=dctx().getImageData(x,y,w,hh),b=bctx().getImageData(x,y,w,hh);
+        dims(w,hh);dctx().putImageData(d,0,0);bctx().putImageData(b,0,0);
+        setMsg("Cropped to "+w+" × "+hh+". Undo brings the full page back.");
+      }else setMsg("Drag a larger area to crop.");
+    }
+    tick(n=>n+1);
+  };
+
+  const doUndo=()=>{if(!undo.current.length)return;const e=undo.current.pop();redo.current.push(snap(!!e.bg));restore(e);tick(n=>n+1)};
+  const doRedo=()=>{if(!redo.current.length)return;const e=redo.current.pop();undo.current.push(snap(!!e.bg));restore(e);tick(n=>n+1)};
+  const clearAll=()=>{push(snap(false));const c=dctx();c.clearRect(0,0,cv.current.width,cv.current.height);setMsg("Drawing cleared. Undo if that was a mistake.")};
+
+  const pickBg=col=>{push(snap(true));bgs.current={color:col,img:null};setBgColor(col);paintBg();setMsg("Background changed.")};
+  const pickImage=e=>{
+    const f=e.target.files&&e.target.files[0];e.target.value="";if(!f)return;
+    const fr=new FileReader();
+    fr.onload=()=>{
+      const img=new Image();
+      img.onload=()=>{
+        const s=Math.min(1000/img.width,1400/img.height,1.5),w=Math.round(img.width*s),hh=Math.round(img.height*s);
+        push(snap(true));dims(w,hh);bgs.current={color:bgs.current.color,img};paintBg();tick(n=>n+1);
+        setMsg("Photo added. The page now matches its shape, so draw on it. Undo restores your previous page.");
+      };
+      img.onerror=()=>setMsg("Couldn’t read that image.");
+      img.src=fr.result;
+    };
+    fr.readAsDataURL(f);
+  };
+
+  const flatten=()=>{
+    const t=document.createElement("canvas");t.width=cv.current.width;t.height=cv.current.height;
+    const c=t.getContext("2d");c.fillStyle="#fff";c.fillRect(0,0,t.width,t.height);
+    c.drawImage(bgc.current,0,0);c.drawImage(cv.current,0,0);return t;
+  };
+  const save=async kind=>{
+    const t=flatten(),w=t.width,hh=t.height;let blob,name;
+    try{
+      if(kind==="pdf"){
+        const {jsPDF}=window.jspdf,photo=!!bgs.current.img;
+        const pdf=new jsPDF({orientation:w>=hh?"l":"p",unit:"px",format:[w,hh],hotfixes:["px_scaling"]});
+        pdf.addImage(photo?t.toDataURL("image/jpeg",0.92):t.toDataURL("image/png"),photo?"JPEG":"PNG",0,0,w,hh);
+        if(!dl.current){pdf.save("drawing.pdf");setMsg("Saved drawing.pdf");return}
+        blob=pdf.output("blob");name="drawing.pdf";
+      }else{
+        blob=await new Promise(r=>t.toBlob(r,"image/png"));name="drawing.png";
+        if(!dl.current){const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;a.click();return}
+      }
+      await dl.current.save({filename:name,data:blob});setMsg("Saved "+name);
+    }catch(err){setMsg(err&&err.code==="declined"?"Save cancelled.":"Couldn’t save the file here.")}
+  };
+
+  const Btn=(label,onClick,extra={})=>h("button",Object.assign({key:label,onClick},extra),label);
+
+  return h("div",{className:"app"},
+    h("h1",null,"🎨 Sketchpad"),
+    h("div",{className:"bar scroll"},
+      TOOLS.map(([id,ic,l])=>h("button",{key:id,title:l,"aria-label":l,className:"tool"+(tool===id?" on":""),onClick:()=>{setTool(id);setMsg(id==="crop"?"Drag a box over the part you want to keep.":id==="emoji"?"Pick an emoji, then tap the canvas to stamp it.":"")}},ic,h("span",{className:"lbl"},l)))
+    ),
+    h("div",{className:"bar scroll"},
+      h("label",null,"Pen",h("input",{type:"color",value:color,onChange:e=>setColor(e.target.value)})),
+      h("label",null,"Size",h("input",{type:"range",min:1,max:30,value:size,onChange:e=>setSize(+e.target.value)}),size),
+      (tool==="rect"||tool==="circle")&&h("label",null,h("input",{type:"checkbox",checked:fill,onChange:e=>setFill(e.target.checked)}),"Filled")
+    ),
+    h("div",{className:"bar scroll"},
+      h("label",null,"Page",h("input",{type:"color",value:bgColor,onChange:e=>pickBg(e.target.value)})),
+      SWATCHES.map(s=>h("button",{key:s,className:"sw","aria-label":"Background "+s,style:{background:s},onClick:()=>pickBg(s)})),
+      h("span",{className:"sep"}),
+      h("label",{className:"btn",style:{color:"var(--text)",fontSize:13}},"📷 Photo",h("input",{type:"file",accept:"image/*",onChange:pickImage,style:{display:"none"}}))
+    ),
+    tool==="emoji"&&h("div",{className:"bar"},h("div",{className:"emojis"},
+      EMOJIS.map(m=>h("button",{key:m,className:emoji===m?"on":"",onClick:()=>setEmoji(m)},m)))),
+    h("div",{className:"stage"},h("div",{className:"paper"},
+      h("canvas",{ref:bgc}),
+      h("canvas",{ref:cv,className:"top",style:{cursor:tool==="eraser"?"cell":"crosshair"},onPointerDown:down,onPointerMove:move,onPointerUp:up,onPointerCancel:up}))),
+    h("div",{className:"msg"},msg),
+    h("div",{className:"bar actions"},
+      Btn("↶ Undo",doUndo,{disabled:!undo.current.length}),
+      Btn("↷ Redo",doRedo,{disabled:!redo.current.length}),
+      Btn("🗑 Erase all",clearAll,{className:"danger"}),
+      h("span",{className:"sep"}),
+      Btn("🖼 PNG",()=>save("png")),
+      Btn("📄 Save as PDF",()=>save("pdf"),{className:"primary"})
+    )
+  );
+}
+ReactDOM.createRoot(document.getElementById("root")).render(h(App));
+</script>
+</body>
+</html>
